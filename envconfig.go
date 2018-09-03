@@ -6,7 +6,6 @@ package envconfig
 
 import (
 	"encoding"
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -14,10 +13,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
-// ErrInvalidSpecification indicates that a specification is of the wrong type.
-var ErrInvalidSpecification = errors.New("specification must be a struct pointer")
+var (
+	// ErrInvalidSpecification indicates that a specification is of the wrong type.
+	ErrInvalidSpecification = errors.New("specification must be a struct pointer")
+	// ErrMissingKey indicates that a key is set as required but no environment value is found
+	ErrMissingKey = errors.New("missing required key")
+)
 
 var gatherRegexp = regexp.MustCompile("([^A-Z]+|[A-Z][^A-Z]+|[A-Z]+)")
 
@@ -27,6 +32,7 @@ type ParseError struct {
 	KeyName   string
 	FieldName string
 	TypeName  string
+	Help      string
 	Value     string
 	Err       error
 }
@@ -124,7 +130,7 @@ func gatherInfo(prefix string, spec interface{}) ([]varInfo, error) {
 
 		if f.Kind() == reflect.Struct {
 			// honor Decode if present
-			if decoderFrom(f) == nil && setterFrom(f) == nil && textUnmarshaler(f) == nil && binaryUnmarshaler(f) == nil  {
+			if decoderFrom(f) == nil && setterFrom(f) == nil && textUnmarshaler(f) == nil && binaryUnmarshaler(f) == nil {
 				innerPrefix := prefix
 				if !ftype.Anonymous {
 					innerPrefix = info.Key
@@ -196,9 +202,16 @@ func Process(prefix string, spec interface{}) error {
 		}
 
 		req := info.Tags.Get("required")
-		if !ok && def == "" {
+		if !ok {
 			if isTrue(req) {
-				return fmt.Errorf("required key %s missing value", info.Key)
+				return &ParseError{
+					KeyName:   info.Key,
+					FieldName: info.Name,
+					TypeName:  info.Field.Type().String(),
+					Value:     value,
+					Help:      info.Tags.Get("help"),
+					Err:       errors.Wrap(ErrMissingKey, fmt.Sprintf("%s missing value", info.Key)),
+				}
 			}
 			continue
 		}
@@ -210,6 +223,7 @@ func Process(prefix string, spec interface{}) error {
 				FieldName: info.Name,
 				TypeName:  info.Field.Type().String(),
 				Value:     value,
+				Help:      info.Tags.Get("help"),
 				Err:       err,
 			}
 		}
